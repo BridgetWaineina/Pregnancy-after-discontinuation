@@ -1,0 +1,243 @@
+#Pregnancy after contraceptive discontnuation
+
+****************************************************************************
+*importing the data
+use "D:\STATA\PMA\Data\Temp\Phase 3 HQFQ\KEP3_WealthWeightAll_8Mar2022.dta",clear
+*****************************************************************************
+
+*Data cleaning
+keep if HHQ_result_cc==1 & FRS_result_cc==1
+keep if last_night==1
+keep if calendar_events_exist=="1"
+
+*****************************************************************************
+
+*Generating age groups
+
+egen Age_Group=cut(FQ_age), at(15(5)50)
+label define Age_Group 15 "15-19" 20 "20-24" 25 "25-29" 30 "30-34" 35 "35-39" 40 "40-44" 45 "45-49"
+label val Age_Group Age_Group 
+
+
+*****************************************************************************
+*Generating parity
+egen parity=cut(birth_events), at(0, 1,2,4, 40) 
+label define parity_list 0 "No child" 1 "1 child" 2 "2-3 children" 4 ">4 children", modify
+label values parity parity_list
+
+****************************************************************************
+
+*Type of residency
+tab ur
+
+*Marital status
+tab FQmarital_status
+
+recode FQmarital_status (1 2= 1 "In Union") (3 4 5=2 "Not in Union"), gen (Marital_status)
+
+tab Marital_status
+
+
+*****************************************************************************
+
+*Frequency of intercourse per week
+replace n_sex_permonth=. if n_sex_permonth==-99| n_sex_permonth==-88
+gen n_sex_perweek= n_sex_permonth/4
+
+gen sexperweek=. 
+replace sexperweek=1 if n_sex_perweek<2
+replace sexperweek=2 if n_sex_perweek>=2 & n_sex_perweek<=35
+
+label define n_sex_perweek 1 "<2/week" 2 ">2/week"
+label val sexperweek n_sex_perweek
+
+*****************************************************************************
+
+*Work
+gen work=0
+replace work=1 if (work_yn_12mo==1 | work_yn_7d==1)
+replace work=. if (work_yn_12mo==. & work_yn_7d==.)
+label val work yes_no_list
+
+*Work for pay
+tab work is_paid
+
+*****************************************************************************
+*Education level
+
+label define education 0 "Never" 1 "Primary" 2 "Post-Primary vocational" 3 "Secondary" 4 "College/ University"
+
+recode school (4 5 =4 "College/ University"),gen (education_level)
+label val education_level education
+
+
+*****************************************************************************
+
+*Keeping necessary varialbles
+keep member_number FQmetainstanceID current_methodnumEC  Marital_status Age_Group wealthtertile_Kenya FQmarital_status cc_col1_full cc_col2_full ur pill implant IUD injectables education_level doi doi_corrected FQdoi FQdoi_corrected FQdoi_correctedSIF doimonth doiyear doicmc current_user_first current_user recent_user current_userEC recent_userEC totaldemand FQweight* work sexperweek parity
+
+/*Keeping only modern contraceptive methods i.e pills, IUD, implants and injectables
+tab current_methodnumEC
+keep if current_methodnumEC>2 & current_methodnumEC <8
+*/
+
+*****************************************************************************
+*Saving dataset
+
+save "D:\STATA\PMA\Data\Temp\Phase 3 HQFQ\KEP3.dta",replace
+
+
+*****************************************************************************
+
+use "D:\STATA\PMA\Data\Temp\Phase 3 HQFQ\KEP3.dta",clear
+
+*****************************************************************************
+*Checking for duplicates
+duplicates tag FQmetainstanceID, gen(d)
+keep if d== 0 
+drop d
+***********************************************************************
+*Splitting the columns 
+
+split cc_col1_full, p(,) generate(method_month_)
+
+foreach i of varlist method_month_1-method_month_48{
+	replace `i'="81" if `i'=="B"
+	replace `i'="82" if `i'=="P"
+	replace `i'="83" if `i'=="T"
+		}
+
+label define event -99 "No response" 0 "No Method Used" 1 "Female sterilization" 2 "Male sterilization" 3 "Implants" 4 "IUD" 5 "Injectable" 7 "Pill" 8 "Emergency Contraceptives" 9 "Male Condom" 10 "Female Condom" 11 "Diaphragm" 12 "Foam/Jelly" 13 "Standard days/cycle beads" 14 "LAM" 30 "Rhythm" 31 "Withdrawal" 39 "Other Traditional methods" 81 "Birth" 82 "Pregnancy" 83 "Termination",modify
+		
+foreach var of varlist method_month_1-method_month_48 {
+	destring `var', replace
+	lab val `var' event
+}
+
+*label val method_month event
+
+*Column 2 reason for discontinued
+*splitting, labelling and destringing 
+
+
+split cc_col2_full, parse(,) generate (reason_month_)
+
+label define reason 1 "Infrequent_sex/husband_away" 2 "Became pregnant while using" 3 "Wanted_to_be_pregnant" 4 "Husband/Partner_disapproved" 5 "Want_more_effective" 6 "Side_effects_health_concerns" 7 "Lack_access/too_far" 8 "Cost_too_much" 9 "Inconvinience_to_use" 10 "Up_to_god" 11 "Difficult_to_get_pregnant/menopausal" 12 "Marrital_dissolution/Separation" 96 "Other", modify
+
+foreach var of varlist reason_month_1-reason_month_48{
+    destring `var', replace
+	label val `var' reason
+}
+
+
+***********************************************************************
+*Renaming variables following the calendar with m_m_1 being the cc_col1 value of interview data
+
+*Macro for full calendar
+global cal_len=36
+
+
+forvalues i = 1/48 {
+   local j = 49 - `i'
+    rename method_month_`i' m_m_`j'
+}
+
+
+forvalues i = 1/48 {
+   local j = 49 - `i'
+    rename reason_month_`i' r_m_`j'
+}
+
+*Dropping empty calendar columns
+
+drop m_m_48-m_m_37
+drop r_m_48-r_m_37
+
+*****************************************************************************
+
+*Macro for the number of months in the full calendar (36 or 48 depending on if the calendar was over 3 or 4 years)
+
+global cal_len=36
+local cal_len = $cal_len
+	
+* Set episode number - initialized to 0
+gen episodes_tot = 0
+* Set previous calendar column 1 variable to anything that won't be in the calendar
+gen prev_cal_col = -1
+
+set trace on
+* Create variable to identify unique episodes of use
+forvalues j = `cal_len'(-1)1 {
+  local i = `cal_len' - `j' + 1
+  * Increase the episode number if there is a change in cc_col1_
+  replace episodes_tot = episodes_tot+1 if m_m_`i' != prev_cal_col
+  * Set the episode number
+  gen int event_number`i' = episodes_tot
+  * Save the cc_col1_* value for the next time through the loop
+  replace prev_cal_col = m_m_`i'
+}
+
+* Step 2: Reshape to data into Long Format and drop unnnecessary variables
+* Drop the calendar variables now we have the separate month by month variables
+drop *_full episodes_tot prev_cal_col
+* Reshape the new month by month variables into a long format
+reshape long event_number m_m_ r_m_ , i(FQmetainstanceID) j(i)
+
+* label the event number variable
+label variable event_number "Event number"
+
+
+
+*****************************************************************************
+
+*Generating cmc for each calendar month
+global firstyear 2019
+global lastyear 2021
+local firstyear $firstyear
+local lastyear $lastyear
+
+gen start_cmc= ((`firstyear'-1900)*12)+1
+gen cmc=start_cmc+i-1
+
+replace FQdoi_correctedSIF=dofc(FQdoi_correctedSIF)
+format FQdoi_correctedSIF %td
+gen today_cmc=((year(FQdoi_correctedSIF)-1900)*12)+month(FQdoi_correctedSIF)
+
+
+* Drop blank episodes occurring after the date of interview 
+drop if cmc > today_cmc
+
+************************************************************************
+
+*Renaming episodes of pregnancies
+
+gen disc_preg=.
+replace disc_preg=1 if r_m_==3 & (m_m_== 3 | m_m_== 4 | m_m_== 5 | m_m_== 7)
+
+bys FQmetainstanceID:gen reason=1 if m_m_[_n] !=m_m_[_n+1] & (m_m_[_n] !=0 & m_m_[_n] !=-99 & m_m_[_n] != 81 & m_m_[_n] !=82 & m_m_[_n] !=83) 
+
+
+*replace disc_preg=0 if disc_preg==.
+
+bys FQmetainstanceID: gen preg_first=1 if m_m_==82  & m_m_[_n-1]!=82
+
+order preg_first, a(r_m_)
+
+
+******************************************************************************
+save "D:\STATA\PMA\Data\Temp\Phase 3 HQFQ\KEP3_disc_preg.dta",replace
+
+use "D:\STATA\PMA\Data\Temp\Phase 3 HQFQ\KEP3_disc_preg.dta",clear
+
+e
+******************************************************************************
+*Cleaning
+tab r_m_ reason
+
+br if FQmetainstanceID=="uuid:99a4eb69-eadf-499e-bb7d-102e9da7de73"
+
+***************************************************************************
+*
+keep i FQweight FQmetainstanceID disc_preg preg_first m_m_ r_m_
+*stset
+stset i [iw=FQweight], id(FQmetainstanceID) origin(disc_preg==1) failure(preg_first==1)
